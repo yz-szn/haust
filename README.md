@@ -2,8 +2,8 @@
 ### 1. Clone Repositori
 Jalankan perintah berikut di terminal:
 ```sh
-git clone https://github.com/yz-szn/monBOT.git
-cd monBOT
+git clone https://github.com/yz-szn/haust.git
+cd haust
 ```
 
 ### 2. Instalasi Dependensi
