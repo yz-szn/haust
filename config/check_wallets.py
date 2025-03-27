@@ -6,13 +6,18 @@ from utils.logger import log
 from colorama import Fore, Style, init
 import logging
 from datetime import datetime
+import os
 
 init(autoreset=True)
 
 RPC_URL = "https://rpc-testnet.haust.app"
-NFT1_CONTRACT_ADDRESS = "0x6B3f185C4c9246c52acE736CA23170801D636c8E" 
-NFT2_CONTRACT_ADDRESS = "0x28e50a3632961dA179b2Afca4675714ea22E7BB7" 
+NFT_CONTRACTS = {
+    "NFT1": "0x6B3f185C4c9246c52acE736CA23170801D636c8E",
+    "NFT2": "0x28e50a3632961dA179b2Afca4675714ea22E7BB7", 
+    "NFT3": "0xdaF34a049EfAa3cc9ad4635D8A710Fae819aca5c"
+}
 HAUST_TOKEN_DECIMALS = 18
+MAX_WORKERS = 10 
 
 NFT_ABI = [
     {
@@ -24,13 +29,19 @@ NFT_ABI = [
     }
 ]
 
-web3 = Web3(Web3.HTTPProvider(RPC_URL))
-if not web3.is_connected():
-    log("CHECK", "Gagal terhubung ke RPC!", "ERROR")
-    exit()
+def init_web3():
+    web3 = Web3(Web3.HTTPProvider(RPC_URL))
+    if not web3.is_connected():
+        log("CHECK", "Gagal terhubung ke RPC!", "ERROR")
+        raise ConnectionError("Koneksi RPC gagal")
+    return web3
 
-nft1_contract = web3.eth.contract(address=NFT1_CONTRACT_ADDRESS, abi=NFT_ABI)
-nft2_contract = web3.eth.contract(address=NFT2_CONTRACT_ADDRESS, abi=NFT_ABI)
+web3 = init_web3()
+
+contracts = {
+    name: web3.eth.contract(address=address, abi=NFT_ABI)
+    for name, address in NFT_CONTRACTS.items()
+}
 
 logging.basicConfig(
     format='[ CHECK ] [%(asctime)s] [%(levelname)s] [%(message)s]',
@@ -41,75 +52,95 @@ logging.basicConfig(
 def load_wallets():
     try:
         with open("wallets.json", "r") as file:
-            return json.load(file)
+            data = json.load(file)
+            if not isinstance(data, list):
+                raise ValueError("Format file wallet salah")
+            return data
     except FileNotFoundError:
         log("CHECK", "File wallets.json tidak ditemukan!", "ERROR")
-        exit()
-    except json.JSONDecodeError:
-        log("CHECK", "Format JSON salah di wallets.json!", "ERROR")
-        exit()
+        exit(1)
+    except (json.JSONDecodeError, ValueError) as e:
+        log("CHECK", f"Error membaca wallet: {str(e)}", "ERROR")
+        exit(1)
+
+def get_balance_with_retry(contract_func, address, retries=3):
+    for attempt in range(retries):
+        try:
+            return contract_func(address).call()
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            time.sleep(1)
 
 def process_wallet(wallet):
     address = wallet["address"]
-
+    balances = {}
+    
     try:
-        balance_nft1 = nft1_contract.functions.balanceOf(address).call()
+        balances = {
+            name: get_balance_with_retry(contract.functions.balanceOf, address)
+            for name, contract in contracts.items()
+        }
+        balances['HAUST'] = web3.eth.get_balance(address) / (10 ** HAUST_TOKEN_DECIMALS)
+        
     except Exception as e:
-        log("CHECK", f"Gagal mendapatkan saldo NFT1 untuk {address}: {str(e)}", "ERROR")
-        balance_nft1 = 0
+        log("CHECK", f"Error memproses {address}: {str(e)}", "ERROR")
+        return wallet, "error"
+    colors = {
+        'HAUST': Fore.GREEN if balances['HAUST'] > 0 else Fore.RED,
+        'NFT1': Fore.GREEN if balances['NFT1'] > 0 else Fore.RED,
+        'NFT2': Fore.GREEN if balances['NFT2'] > 0 else Fore.RED,
+        'NFT3': Fore.GREEN if balances['NFT3'] > 0 else Fore.RED
+    }
 
-    try:
-        balance_nft2 = nft2_contract.functions.balanceOf(address).call()
-    except Exception as e:
-        log("CHECK", f"Gagal mendapatkan saldo NFT2 untuk {address}: {str(e)}", "ERROR")
-        balance_nft2 = 0
+    log_msg = (
+        f"{Fore.CYAN}{address:<42} | "
+        f"{colors['HAUST']}{balances['HAUST']:>6.3f} HAUST{Style.RESET_ALL} | "
+        f"{colors['NFT1']}{balances['NFT1']:>3} NFT1{Style.RESET_ALL} | "
+        f"{colors['NFT2']}{balances['NFT2']:>3} NFT2{Style.RESET_ALL} | "
+        f"{colors['NFT3']}{balances['NFT3']:>3} NFT3"
+    )
+    
+    log("CHECK", log_msg, "INFO")
 
-    try:
-        balance_haust = web3.eth.get_balance(address) / (10 ** HAUST_TOKEN_DECIMALS)
-    except Exception as e:
-        log("CHECK", f"Gagal mendapatkan saldo HAUST untuk {address}: {str(e)}", "ERROR")
-        balance_haust = 0
-
-    haust_color = Fore.GREEN if balance_haust > 0 else Fore.RED
-    nft1_color = Fore.GREEN if balance_nft1 > 0 else Fore.RED
-    nft2_color = Fore.GREEN if balance_nft2 > 0 else Fore.RED
-
-    log("CHECK", f"{Fore.CYAN}{address:<42} | {haust_color}{balance_haust:>1f} HAUST{Style.RESET_ALL} | {nft1_color}{balance_nft1:>1} NFT1{Style.RESET_ALL} | {nft2_color}{balance_nft2:>1} NFT2{Style.RESET_ALL}", "INFO")
-
-    if balance_nft1 > 0 and balance_nft2 > 0 and balance_haust > 0:
+    if all(balances[asset] > 0 for asset in ['HAUST', 'NFT1', 'NFT2', 'NFT3']):
         return wallet, "with_balance"
-    else:
-        return wallet, "without_balance"
+    return wallet, "without_balance"
 
-async def run():
-    wallets = load_wallets()
-    log("CHECK", f"{Fore.YELLOW}Total wallet yang diproses: {len(wallets)}{Style.RESET_ALL}", "INFO")
-
-    wallets_with_balance = []
-    wallets_without_balance = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(process_wallet, wallets))
-
-    for wallet, status in results:
-        if status == "with_balance":
-            wallets_with_balance.append(wallet)
-        else:
-            wallets_without_balance.append(wallet)
-
+def save_results(data, filename):
     try:
-        with open("wallets_with_balance.json", "w") as file:
-            json.dump(wallets_with_balance, file, indent=4)
-
-        with open("wallets_without_balance.json", "w") as file:
-            json.dump(wallets_without_balance, file, indent=4)
-
-        log("CHECK", f"{Fore.CYAN}Hasil pengecekan telah disimpan.", "INFO")
+        with open(filename, "w") as file:
+            json.dump(data, file, indent=4)
+        log("CHECK", f"{Fore.CYAN}Data tersimpan di {filename}", "INFO")
     except Exception as e:
-        log("CHECK", f"Gagal menyimpan file JSON: {str(e)}", "ERROR")
+        log("CHECK", f"Gagal menyimpan {filename}: {str(e)}", "ERROR")
 
-    log("CHECK", f"{Fore.YELLOW}Total wallet dengan saldo HAUST & NFT: {len(wallets_with_balance)}{Style.RESET_ALL}", "INFO")
-    log("CHECK", f"{Fore.YELLOW}Total wallet tanpa saldo HAUST & NFT: {len(wallets_without_balance)}{Style.RESET_ALL}", "INFO")
+def run():
+    try:
+        wallets = load_wallets()
+        log("CHECK", f"{Fore.YELLOW}Memproses {len(wallets)} wallet...{Style.RESET_ALL}", "INFO")
+        
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            results = list(executor.map(process_wallet, wallets))
+        categorized = {
+            "with_balance": [],
+            "without_balance": [],
+            "error": []
+        }
+        
+        for wallet, status in results:
+            categorized[status].append(wallet)
+        save_results(categorized["with_balance"], "wallets_with_balance.json")
+        save_results(categorized["without_balance"], "wallets_without_balance.json")
+        
+        log("CHECK", f"\n{Fore.YELLOW}SUMMARY:{Style.RESET_ALL}")
+        log("CHECK", f"Wallet dengan balance: {len(categorized['with_balance'])}")
+        log("CHECK", f"Wallet tanpa balance: {len(categorized['without_balance'])}")
+        log("CHECK", f"Error: {len(categorized['error'])}")
+
+    except Exception as e:
+        log("CHECK", f"Error utama: {str(e)}", "ERROR")
+        exit(1)
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(run())
+    run()
