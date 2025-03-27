@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 RPC_URL = "https://rpc-testnet.haust.app"
 NFT1_CONTRACT_ADDRESS = "0x6B3f185C4c9246c52acE736CA23170801D636c8E"
 NFT2_CONTRACT_ADDRESS = "0x28e50a3632961dA179b2Afca4675714ea22E7BB7"
+NFT3_CONTRACT_ADDRESS = "0xdaF34a049EfAa3cc9ad4635D8A710Fae819aca5c"
 NFT_ABI = [
     {"inputs": [], "name": "safeMint", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
     {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}], "name": "balanceOf", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
@@ -76,10 +77,7 @@ def check_nft_balance(address, web3, contract_address):
 def mint_nft(wallet, proxies, contract_address, web3_cache={}):
     address = wallet["address"]
     private_key = wallet["privateKey"]
-
-    #log_colored("MINT_NFT", f"Memulai proses minting untuk {address}", "INFO")
-
-    # Cek saldo NFT sebelum melakukan minting
+    
     web3 = web3_cache.get(None, Web3(Web3.HTTPProvider(RPC_URL)))
     balance = check_nft_balance(address, web3, contract_address)
     if balance > 0:
@@ -176,6 +174,7 @@ def run():
     print(Fore.YELLOW + "\n[=== PILIH NFT ===]")
     print(Fore.CYAN + "1. NFT1")
     print(Fore.CYAN + "2. NFT2")
+    print(Fore.CYAN + "3. NFT3")
     choice = input(Fore.GREEN + "Masukkan pilihan (1-2): ").strip()
 
     if choice == "1":
@@ -184,8 +183,11 @@ def run():
     elif choice == "2":
         contract_address = NFT2_CONTRACT_ADDRESS
         log_colored("MINT_NFT", "Anda memilih NFT2", "INFO")
+    elif choice == "3":
+        contract_address = NFT3_CONTRACT_ADDRESS
+        log_colored("MINT_NFT", "Anda memilih NFT3", "INFO")
     else:
-        log_colored("MINT_NFT", "Pilihan tidak valid! Mohon pilih antara 1-2.", "ERROR")
+        log_colored("MINT_NFT", "Pilihan tidak valid! Mohon pilih antara 1-3", "ERROR")
         return
 
     for i in range(0, len(wallets), THREAD_COUNT):
